@@ -1,8 +1,8 @@
 import { ipcMain, dialog } from 'electron';
 import { writeFile } from 'fs/promises';
 import { v4 as uuid } from 'uuid';
-import { IPC_CHANNELS, SessionStatus, PacedSegment } from '../../shared/types/ipc';
-import { DEFAULT_SETTINGS, AudioSettings, PacingSettings } from '../../shared/types/settings';
+import { IPC_CHANNELS, SessionStatus, PacedSegment, AppStatusEvent } from '../../shared/types/ipc';
+import { DEFAULT_SETTINGS, AudioSettings, PacingSettings, AppSettings } from '../../shared/types/settings';
 import { TranscriptSegment } from '../../shared/types/transcript';
 import { AudioCaptureManager } from '../audio/AudioCaptureManager';
 import { WhisperEngine, WhisperTask } from '../stt/WhisperEngine';
@@ -21,6 +21,25 @@ const networkServer = new NetworkServer();
 let sessionStatus: SessionStatus = 'idle';
 let currentAudioSettings: AudioSettings = { ...DEFAULT_SETTINGS.audio };
 let sttReady = false;
+
+// Settings persistence via electron-store (ESM — loaded dynamically)
+let store: any = null;
+(async () => {
+  const { default: Store } = await import('electron-store');
+  store = new Store<AppSettings>({ defaults: DEFAULT_SETTINGS });
+
+  // Restore persisted audio settings
+  const storedAudio = store.get('audio') as Partial<AudioSettings> | undefined;
+  if (storedAudio) {
+    currentAudioSettings = { ...DEFAULT_SETTINGS.audio, ...storedAudio };
+  }
+
+  // Restore persisted pacing settings
+  const storedPacing = store.get('pacing') as Partial<PacingSettings> | undefined;
+  if (storedPacing) {
+    pacingController.updateSettings({ ...DEFAULT_SETTINGS.pacing, ...storedPacing });
+  }
+})();
 
 // Initialize STT engine on startup
 (async () => {
@@ -69,12 +88,25 @@ pacingController.on('paced', (paced: PacedSegment) => {
   }
 });
 
+function pushAppStatus(event: AppStatusEvent): void {
+  const control = getControlWindow();
+  if (control && !control.isDestroyed()) {
+    control.webContents.send(IPC_CHANNELS.APP_STATUS, event);
+  }
+}
+
 sttEngine.on('error', (err: Error) => {
   console.error('STT error:', err.message);
+  pushAppStatus({ type: 'error', message: `Transcription error: ${err.message}` });
 });
 
 sttEngine.on('status', (msg: string) => {
   console.log('STT status:', msg);
+  pushAppStatus({ type: 'info', message: msg });
+});
+
+sttEngine.on('progress', (progress: number) => {
+  pushAppStatus({ type: 'progress', message: 'Loading model…', progress });
 });
 
 export function getAudioCapture(): AudioCaptureManager {
@@ -93,17 +125,24 @@ export function registerIpcHandlers(): void {
 
   // Settings
   ipcMain.handle(IPC_CHANNELS.SETTINGS_GET, async () => {
+    if (store) return store.store as AppSettings;
     return DEFAULT_SETTINGS;
   });
 
   ipcMain.handle(IPC_CHANNELS.SETTINGS_UPDATE, async (_event, settings) => {
     if (settings.audio) {
       currentAudioSettings = { ...currentAudioSettings, ...settings.audio };
+      if (store) store.set('audio', currentAudioSettings);
     }
     if (settings.pacing) {
       pacingController.updateSettings(settings.pacing);
+      if (store) store.set('pacing', settings.pacing);
     }
     if (settings.display) {
+      if (store) {
+        const existing = (store.get('display') as object | undefined) ?? {};
+        store.set('display', { ...existing, ...settings.display });
+      }
       // Forward display settings to display window
       const display = getDisplayWindow();
       if (display && !display.isDestroyed()) {
@@ -164,6 +203,7 @@ export function registerIpcHandlers(): void {
 
     transcriptBuffer.clear();
     pacingController.clear();
+    sttEngine.reset();
 
     audioCapture.start(currentAudioSettings);
     sessionStatus = 'recording';
@@ -185,6 +225,7 @@ export function registerIpcHandlers(): void {
 
     audioCapture.on('error', (err: Error) => {
       console.error('Audio capture error:', err.message);
+      pushAppStatus({ type: 'error', message: `Audio error: ${err.message}` });
     });
 
     return sessionStatus;

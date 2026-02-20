@@ -1,6 +1,6 @@
 import { contextBridge, ipcRenderer } from 'electron';
-import { IPC_CHANNELS, SessionStatus, AudioDevice, NetworkStatus } from '../shared/types/ipc';
-import { AppSettings, DisplaySettings, PacingSettings } from '../shared/types/settings';
+import { IPC_CHANNELS, SessionStatus, AudioDevice, NetworkStatus, AppStatusEvent } from '../shared/types/ipc';
+import { AppSettings } from '../shared/types/settings';
 import { TranscriptSegment } from '../shared/types/transcript';
 
 const controlAPI = {
@@ -64,6 +64,11 @@ const controlAPI = {
     const listener = (_event: Electron.IpcRendererEvent, level: number) => callback(level);
     ipcRenderer.on(IPC_CHANNELS.AUDIO_LEVEL, listener);
     return () => ipcRenderer.removeListener(IPC_CHANNELS.AUDIO_LEVEL, listener);
+  },
+  onAppStatus: (callback: (event: AppStatusEvent) => void) => {
+    const listener = (_event: Electron.IpcRendererEvent, statusEvent: AppStatusEvent) => callback(statusEvent);
+    ipcRenderer.on(IPC_CHANNELS.APP_STATUS, listener);
+    return () => ipcRenderer.removeListener(IPC_CHANNELS.APP_STATUS, listener);
   },
 };
 

@@ -1,5 +1,4 @@
 import { TranscriptSegment } from './transcript';
-import { AppSettings, DisplaySettings, PacingSettings, AudioSettings, NetworkSettings } from './settings';
 
 // IPC channel names
 export const IPC_CHANNELS = {
@@ -40,7 +39,17 @@ export const IPC_CHANNELS = {
   NETWORK_STOP: 'network:stop',
   NETWORK_STATUS: 'network:status',
   NETWORK_QR: 'network:qr',
+
+  // App status / errors pushed from main → control window
+  APP_STATUS: 'app:status',
 } as const;
+
+export interface AppStatusEvent {
+  type: 'error' | 'warning' | 'progress' | 'info';
+  message: string;
+  /** 0–1 for type === 'progress', omitted otherwise */
+  progress?: number;
+}
 
 export type SessionStatus = 'idle' | 'recording' | 'paused';
 

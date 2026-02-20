@@ -1,3 +1,5 @@
+import { isValidReference } from './bibleData';
+
 const BIBLE_BOOKS = [
   // Old Testament
   'Genesis', 'Exodus', 'Leviticus', 'Numbers', 'Deuteronomy',
@@ -5,7 +7,7 @@ const BIBLE_BOOKS = [
   '1 Samuel', '2 Samuel', '1 Kings', '2 Kings',
   '1 Chronicles', '2 Chronicles',
   'Ezra', 'Nehemiah', 'Esther',
-  'Job', 'Psalms?', 'Proverbs', 'Ecclesiastes', 'Song of Solomon',
+  'Job', 'Psalms', 'Psalm', 'Proverbs', 'Ecclesiastes', 'Song of Solomon',
   'Isaiah', 'Jeremiah', 'Lamentations', 'Ezekiel', 'Daniel',
   'Hosea', 'Joel', 'Amos', 'Obadiah', 'Jonah', 'Micah',
   'Nahum', 'Habakkuk', 'Zephaniah', 'Haggai', 'Zechariah', 'Malachi',
@@ -19,66 +21,25 @@ const BIBLE_BOOKS = [
   '1 John', '2 John', '3 John', 'Jude', 'Revelation',
 ];
 
-const booksPattern = BIBLE_BOOKS.join('|');
-
-// Match three spoken patterns:
-// 1. "John 3:16" or "John 3:16-18" (standard colon format)
-// 2. "John chapter 3 verse 16" or "John chapter 3 verses 16 through 18"
-// 3. "John 316" or "John 3 16" (no colon, digits together or space-separated)
-const PATTERNS = [
-  // Standard: "John 3:16", "John 3:16-18", "John 3:16-4:2"
-  `((?:${booksPattern})\\s+\\d+:\\d+(?:\\s*-\\s*\\d+(?::\\d+)?)?)`,
-  // Spoken: "John chapter 3 verse 16", "John chapter 3 verses 16 through 20"
-  `((?:${booksPattern})\\s+chapter\\s+\\d+\\s+verses?\\s+\\d+(?:\\s+(?:through|to|-)\\s+\\d+)?)`,
-  // No colon: "John 316" (2-4 digits, split as chapter+verse) or "John 3 16" (space-separated)
-  `((?:${booksPattern})\\s+\\d{1,3}\\s+\\d{1,3}(?:\\s*-\\s*\\d+)?)`,
-  `((?:${booksPattern})\\s+\\d{2,})`,
-];
-
-export const BIBLE_REF_REGEX = new RegExp(PATTERNS.join('|'), 'gi');
+// Sort longest first so "Song of Solomon" matches before "Song", "1 John" before "John", etc.
+const SORTED_BOOKS = [...BIBLE_BOOKS].sort((a, b) => b.length - a.length);
 
 /**
- * Normalize a matched reference to standard "Book Chapter:Verse" format.
+ * Try all ways to split a digit string into chapter:verse,
+ * preferring the split with the largest valid chapter number.
  */
-function normalizeReference(raw: string): string {
-  // Already has colon - standard format, return as-is
-  if (raw.includes(':')) return raw;
-
-  // "chapter X verse(s) Y (through Z)" pattern
-  const chapterVerseMatch = raw.match(
-    /^(.+?)\s+chapter\s+(\d+)\s+verses?\s+(\d+)(?:\s+(?:through|to|-)\s+(\d+))?$/i
-  );
-  if (chapterVerseMatch) {
-    const [, book, ch, v, vEnd] = chapterVerseMatch;
-    return vEnd ? `${book} ${ch}:${v}-${vEnd}` : `${book} ${ch}:${v}`;
-  }
-
-  // "Book X Y" - two separate numbers with space
-  const twoNumbersMatch = raw.match(/^(.+?)\s+(\d{1,3})\s+(\d{1,3})(?:\s*-\s*(\d+))?$/);
-  if (twoNumbersMatch) {
-    const [, book, ch, v, vEnd] = twoNumbersMatch;
-    return vEnd ? `${book} ${ch}:${v}-${vEnd}` : `${book} ${ch}:${v}`;
-  }
-
-  // "Book 316" - digits run together, try to split
-  const runTogetherMatch = raw.match(/^(.+?)\s+(\d{2,})$/);
-  if (runTogetherMatch) {
-    const [, book, digits] = runTogetherMatch;
-    // Try splitting: first 1-2 digits as chapter, rest as verse
-    // Heuristic: if 2 digits, split 1:X (e.g. "16" is ambiguous, skip)
-    // If 3 digits, split as X:YY (e.g. "316" → "3:16")
-    // If 4 digits, split as XX:YY (e.g. "2316" → "23:16")
-    if (digits.length === 3) {
-      return `${book} ${digits[0]}:${digits.slice(1)}`;
+function splitDigitsValidated(book: string, digits: string): string | null {
+  let best: { ch: number; v: number } | null = null;
+  for (let i = 1; i < digits.length; i++) {
+    const ch = parseInt(digits.slice(0, i), 10);
+    const v = parseInt(digits.slice(i), 10);
+    if (v > 0 && isValidReference(book, ch, v)) {
+      if (!best || ch > best.ch) {
+        best = { ch, v };
+      }
     }
-    if (digits.length === 4) {
-      return `${book} ${digits.slice(0, 2)}:${digits.slice(2)}`;
-    }
-    // 2 digits or 5+ - too ambiguous, return as-is
-    return raw;
   }
-
-  return raw;
+  return best ? `${book} ${best.ch}:${best.v}` : null;
 }
 
 export interface TextPart {
@@ -87,45 +48,119 @@ export interface TextPart {
 }
 
 /**
+ * Find a Bible book name starting at position `start` in the text.
+ * Returns the matched book name or null.
+ */
+function findBookAt(text: string, start: number): string | null {
+  const sub = text.slice(start);
+  for (const book of SORTED_BOOKS) {
+    if (sub.length < book.length) continue;
+    const candidate = sub.slice(0, book.length);
+    if (candidate.toLowerCase() === book.toLowerCase()) {
+      // Make sure it's not a partial word match (e.g., "Joshua" inside "Joshuary")
+      const afterChar = sub[book.length];
+      if (!afterChar || afterChar === ' ' || afterChar === '\t') {
+        return candidate;
+      }
+    }
+  }
+  return null;
+}
+
+/**
+ * Parse the reference portion after a book name.
+ * Returns { ref: normalized string, length: chars consumed } or null.
+ */
+function parseRefAfterBook(book: string, text: string): { ref: string; length: number } | null {
+  const trimmed = text.trimStart();
+  const leadingSpaces = text.length - trimmed.length;
+  if (leadingSpaces === 0) return null; // no space after book name
+
+  // Pattern 1: "chapter X verse(s) Y (through/to Z)"
+  const chapterMatch = trimmed.match(
+    /^chapter\s+(\d+)\s+verses?\s+(\d+)(?:\s+(?:through|to|-)\s+(\d+))?/i
+  );
+  if (chapterMatch) {
+    const [full, ch, v, vEnd] = chapterMatch;
+    const ref = vEnd ? `${book} ${ch}:${v}-${vEnd}` : `${book} ${ch}:${v}`;
+    return { ref, length: leadingSpaces + full.length };
+  }
+
+  // Pattern 2: "X:Y" or "X:Y-Z" or "X:Y-Z:W" (standard colon format)
+  const colonMatch = trimmed.match(
+    /^(\d+):(\d+)(?:\s*-\s*(\d+)(?::(\d+))?)?/
+  );
+  if (colonMatch) {
+    const [full] = colonMatch;
+    return { ref: `${book} ${full}`, length: leadingSpaces + full.length };
+  }
+
+  // Pattern 3: "X Y" or "X Y-Z" (two space-separated numbers)
+  const twoNumMatch = trimmed.match(/^(\d{1,3})\s+(\d{1,3})(?:\s*-\s*(\d+))?/);
+  if (twoNumMatch) {
+    const [full, ch, v, vEnd] = twoNumMatch;
+    const ref = vEnd ? `${book} ${ch}:${v}-${vEnd}` : `${book} ${ch}:${v}`;
+    return { ref, length: leadingSpaces + full.length };
+  }
+
+  // Pattern 4: "NNN" (digits together, no colon, no space)
+  const digitsMatch = trimmed.match(/^(\d{2,})/);
+  if (digitsMatch) {
+    const [full, digits] = digitsMatch;
+    const validated = splitDigitsValidated(book, digits);
+    if (validated) {
+      return { ref: validated, length: leadingSpaces + full.length };
+    }
+  }
+
+  return null;
+}
+
+/**
  * Split text into parts, identifying Bible references.
- * Normalizes spoken forms like "John 316" or "John chapter 3 verse 16"
- * into standard "John 3:16" format.
+ * Uses a two-phase approach: find book names, then parse what follows.
  */
 export function parseBibleReferences(text: string): TextPart[] {
   const parts: TextPart[] = [];
-  let lastIndex = 0;
+  let pos = 0;
 
-  // Reset regex state
-  BIBLE_REF_REGEX.lastIndex = 0;
+  while (pos < text.length) {
+    // Try to find a book name at or after current position
+    let found = false;
+    for (let i = pos; i < text.length; i++) {
+      const book = findBookAt(text, i);
+      if (!book) continue;
 
-  let match: RegExpExecArray | null;
-  while ((match = BIBLE_REF_REGEX.exec(text)) !== null) {
-    // Find which capture group matched
-    const matched = match[1] || match[2] || match[3] || match[4] || '';
-    if (!matched) continue;
+      // Try to parse a reference after the book name
+      const afterBook = text.slice(i + book.length);
+      const result = parseRefAfterBook(book, afterBook);
+      if (!result) continue;
 
-    // Text before the reference
-    if (match.index > lastIndex) {
-      const before = text.slice(lastIndex, match.index).trim();
-      if (before) {
-        parts.push({ text: before, isReference: false });
+      // Add text before this reference
+      if (i > pos) {
+        const before = text.slice(pos, i).trim();
+        if (before) {
+          parts.push({ text: before, isReference: false });
+        }
       }
+
+      // Add the reference
+      parts.push({ text: result.ref, isReference: true });
+      pos = i + book.length + result.length;
+      found = true;
+      break;
     }
 
-    // Normalize and add the reference
-    parts.push({ text: normalizeReference(matched.trim()), isReference: true });
-    lastIndex = match.index + match[0].length;
-  }
-
-  // Remaining text after last reference
-  if (lastIndex < text.length) {
-    const after = text.slice(lastIndex).trim();
-    if (after) {
-      parts.push({ text: after, isReference: false });
+    if (!found) {
+      // No more references found
+      const remaining = text.slice(pos).trim();
+      if (remaining) {
+        parts.push({ text: remaining, isReference: false });
+      }
+      break;
     }
   }
 
-  // No references found - return original text
   if (parts.length === 0) {
     parts.push({ text, isReference: false });
   }

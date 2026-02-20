@@ -117,6 +117,7 @@ export class AudioCaptureManager extends EventEmitter {
       this.stream = null;
       this._isRecording = false;
       delete process.env.AUDIODEV;
+      this.processor.reset();
       this.emit('stopped');
     }
   }

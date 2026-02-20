@@ -33,7 +33,15 @@ module.exports = {
     },
     {
       name: '@electron-forge/maker-rpm',
-      config: {},
+      config: {
+        options: {
+          name: 'autoscribe',
+          productName: 'AutoScribe',
+          description: 'AI-enhanced transcription tool for churches',
+          categories: ['Accessibility', 'AudioVideo'],
+          license: 'MIT',
+        },
+      },
     },
   ],
   plugins: [

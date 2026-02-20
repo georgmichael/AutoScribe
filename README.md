@@ -23,6 +23,10 @@ AutoScribe is an offline, AI-powered transcription tool designed for churches to
   - Ubuntu/Debian: `sudo apt install sox`
   - Windows: [Download from SourceForge](https://sourceforge.net/projects/sox/)
 
+> **Tip:** If SoX is not found at launch, a red error banner will appear in the control panel with a clear message. The app will not crash.
+
+
+
 ## Getting Started
 
 ### Install dependencies
@@ -37,7 +41,7 @@ npm install
 npm start
 ```
 
-On first launch, AutoScribe will download the Whisper speech recognition model (approximately 250 MB). This only happens once and the model is cached locally for future use.
+On first launch, AutoScribe will download the Whisper speech recognition model (approximately 250 MB). A progress bar in the control panel shows download progress. This only happens once; the model is cached locally for future use.
 
 ### Build for macOS
 
@@ -52,6 +56,22 @@ The distributable will be created in `out/make/zip/darwin/`.
 ```bash
 npm run make:pi
 ```
+
+### Lint
+
+```bash
+npm run lint
+```
+
+Runs ESLint with `@typescript-eslint/recommended` rules across all `src/` TypeScript and TSX files.
+
+### Tests
+
+```bash
+npm test
+```
+
+Runs the Jest test suite. Tests cover the Bible reference parser across standard, spoken, range, and edge-case formats.
 
 ## Architecture
 
@@ -90,6 +110,9 @@ When the network server is enabled, any device on the same local network can con
 | Network | Express 5, WebSocket (ws) |
 | Build | electron-forge, Webpack |
 | NLP | compromise (sentence segmentation) |
+| Settings Persistence | electron-store |
+| Testing | Jest, ts-jest |
+| Linting | ESLint 10, @typescript-eslint |
 
 ## Project Structure
 
@@ -107,6 +130,8 @@ src/
     display/             # Fullscreen display window (React)
   shared/
     types/               # Shared TypeScript interfaces
+    __tests__/           # Jest unit tests
+    bibleData.ts         # Verse count data for reference validation
     bibleReferences.ts   # Bible reference detection and normalization
   preload/               # Context bridge scripts
   assets/                # Logo and app icon
@@ -114,7 +139,7 @@ src/
 
 ## Configuration
 
-All settings are adjustable from the control panel at runtime:
+All settings are adjustable from the control panel at runtime and are **automatically persisted** between sessions — no manual save required.
 
 | Setting | Options |
 |---------|---------|
@@ -126,6 +151,18 @@ All settings are adjustable from the control panel at runtime:
 | Control Panel Theme | Light, Dark, High Contrast |
 | Language | English, Spanish, Spanish to English translation |
 | Audio Input | Microphone or Line-in, with device selection |
+
+Settings are stored via `electron-store` in the OS user-data directory (e.g. `~/Library/Application Support/AutoScribe/` on macOS).
+
+## Error Handling
+
+The control panel surfaces runtime errors as dismissible red banners:
+
+- **SoX not found** — shown if the audio capture process fails to start
+- **Transcription errors** — shown if the Whisper model encounters a problem
+- **Model download progress** — a progress bar is shown the first time the model is downloaded
+
+No error silently swallowed by the main process will go unnoticed by the operator.
 
 ## License
 

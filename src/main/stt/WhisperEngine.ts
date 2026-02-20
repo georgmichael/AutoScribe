@@ -1,3 +1,5 @@
+import { app } from 'electron';
+import path from 'path';
 import { STTEngine, STTResult } from './STTEngine';
 
 // Dynamic import for ESM-only @huggingface/transformers
@@ -53,6 +55,7 @@ export class WhisperEngine extends STTEngine {
 
   async init(): Promise<void> {
     this.emit('status', 'Loading Whisper model (this may take a moment on first run)...');
+    this.emit('progress', 0);
 
     await loadTransformers();
 
@@ -66,10 +69,16 @@ export class WhisperEngine extends STTEngine {
       {
         dtype: 'q8',         // Quantized for speed
         device: 'cpu',       // CPU for broadest compatibility (incl. Pi)
+        progress_callback: (progressInfo: { status: string; progress?: number }) => {
+          if (progressInfo.status === 'progress' && progressInfo.progress !== undefined) {
+            this.emit('progress', progressInfo.progress / 100);
+          }
+        },
       }
     );
 
     this._isReady = true;
+    this.emit('progress', 1);
     this.emit('status', 'Whisper model loaded');
     this.emit('ready');
   }
@@ -124,6 +133,17 @@ export class WhisperEngine extends STTEngine {
     if (this.totalSamples > 0) {
       await this.transcribeBuffer();
     }
+  }
+
+  /**
+   * Reset per-session state (WAV header flag + audio buffer).
+   * Call this at the start of each recording session.
+   * Does NOT tear down the loaded transcriber model.
+   */
+  reset(): void {
+    this.headerSkipped = false;
+    this.audioBuffer = [];
+    this.totalSamples = 0;
   }
 
   destroy(): void {
@@ -183,8 +203,6 @@ export class WhisperEngine extends STTEngine {
   }
 
   private getCacheDir(): string {
-    const { app } = require('electron');
-    const path = require('path');
     return path.join(app.getPath('userData'), 'models');
   }
 }

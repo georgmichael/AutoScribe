@@ -1,7 +1,7 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
 import { ControlAPI } from '../../preload/control';
 import { TranscriptSegment } from '../../shared/types/transcript';
-import { AudioDevice, NetworkStatus } from '../../shared/types/ipc';
+import { AudioDevice, NetworkStatus, AppStatusEvent } from '../../shared/types/ipc';
 import { parseBibleReferences } from '../../shared/bibleReferences';
 import logoSrc from '../../assets/logo.png';
 
@@ -67,12 +67,16 @@ export function ControlApp() {
   const [networkStatus, setNetworkStatus] = useState<NetworkStatus | null>(null);
   const [qrCode, setQrCode] = useState<string | null>(null);
   const [showExportPrompt, setShowExportPrompt] = useState(false);
+  const [appErrors, setAppErrors] = useState<string[]>([]);
+  const [modelProgress, setModelProgress] = useState<number | null>(null);
   const [sttLanguage, setSTTLanguage] = useState('en');
   const [audioDevices, setAudioDevices] = useState<AudioDevice[]>([]);
   const [selectedDevice, setSelectedDevice] = useState('default');
   const [inputType, setInputType] = useState<'microphone' | 'line-in'>('microphone');
   const [audioTesting, setAudioTesting] = useState(false);
   const transcriptEndRef = useRef<HTMLDivElement>(null);
+  const wpmDebounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const fontSizeDebounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const t = CONTROL_THEMES[controlTheme];
 
@@ -84,6 +88,21 @@ export function ControlApp() {
       clearTimeout(fadeTimer);
       clearTimeout(hideTimer);
     };
+  }, []);
+
+  // Subscribe to errors and model load progress from main process
+  useEffect(() => {
+    const unsub = window.autoscribe.onAppStatus((event: AppStatusEvent) => {
+      if (event.type === 'error' || event.type === 'warning') {
+        setAppErrors((prev) => [...prev, event.message]);
+      } else if (event.type === 'progress') {
+        const pct = event.progress ?? 0;
+        setModelProgress(pct >= 1 ? null : pct);
+      } else if (event.type === 'info' && event.message.includes('loaded')) {
+        setModelProgress(null);
+      }
+    });
+    return unsub;
   }, []);
 
   // Fetch audio devices on mount
@@ -100,7 +119,7 @@ export function ControlApp() {
 
   useEffect(() => {
     const unsub = window.autoscribe.onTranscriptSegment((segment) => {
-      setSegments((prev) => [...prev, segment]);
+      setSegments((prev) => [...prev, segment].slice(-500));
     });
     return unsub;
   }, []);
@@ -190,6 +209,7 @@ export function ControlApp() {
         <div className="flex items-center gap-4">
           {/* Control panel theme toggle - cycles light → dark → high-contrast */}
           <button
+            aria-label={`Control panel theme: ${controlTheme} (click to cycle)`}
             className={`w-8 h-8 flex items-center justify-center rounded-lg border ${t.border} hover:opacity-80 transition-colors`}
             onClick={() => {
               const cycle: ControlTheme[] = ['light', 'dark', 'high-contrast'];
@@ -215,6 +235,7 @@ export function ControlApp() {
             )}
           </button>
           <button
+            aria-label="Open display window"
             className="text-xs px-3 py-1.5 bg-indigo-600 text-white rounded hover:bg-indigo-700"
             onClick={() => window.autoscribe.openDisplay()}
           >
@@ -229,6 +250,37 @@ export function ControlApp() {
           </div>
         </div>
       </header>
+
+      {/* Model download progress bar */}
+      {modelProgress !== null && (
+        <div className="bg-indigo-700 text-white px-4 py-2 text-sm flex items-center gap-3">
+          <span className="flex-shrink-0">Loading model…</span>
+          <div className="flex-1 h-2 bg-indigo-500 rounded overflow-hidden">
+            <div
+              className="h-full bg-white transition-all duration-300"
+              style={{ width: `${Math.round(modelProgress * 100)}%` }}
+            />
+          </div>
+          <span className="flex-shrink-0 tabular-nums">{Math.round(modelProgress * 100)}%</span>
+        </div>
+      )}
+
+      {/* Error banners */}
+      {appErrors.map((msg, i) => (
+        <div
+          key={i}
+          className="bg-red-600 text-white px-4 py-2 text-sm flex items-center justify-between"
+        >
+          <span>{msg}</span>
+          <button
+            aria-label="Dismiss error"
+            className="ml-4 text-white hover:text-red-200 font-bold leading-none"
+            onClick={() => setAppErrors((prev) => prev.filter((_, idx) => idx !== i))}
+          >
+            ✕
+          </button>
+        </div>
+      ))}
 
       {/* Export prompt overlay */}
       {showExportPrompt && (
@@ -265,6 +317,7 @@ export function ControlApp() {
             <h2 className={`text-xs font-semibold ${t.textFaint} uppercase tracking-wide mb-2`}>Session</h2>
             {status === 'idle' ? (
               <button
+                aria-label="Start recording session"
                 className="w-full px-4 py-2 rounded text-white text-sm font-medium bg-green-600 hover:bg-green-700"
                 onClick={startSession}
               >
@@ -274,6 +327,7 @@ export function ControlApp() {
               <div className="space-y-2">
                 {status === 'recording' ? (
                   <button
+                    aria-label="Pause recording"
                     className="w-full px-4 py-2 rounded text-white text-sm font-medium bg-yellow-500 hover:bg-yellow-600"
                     onClick={pauseSession}
                   >
@@ -281,6 +335,7 @@ export function ControlApp() {
                   </button>
                 ) : (
                   <button
+                    aria-label="Resume recording"
                     className="w-full px-4 py-2 rounded text-white text-sm font-medium bg-green-600 hover:bg-green-700"
                     onClick={resumeSession}
                   >
@@ -288,6 +343,7 @@ export function ControlApp() {
                   </button>
                 )}
                 <button
+                  aria-label="Stop recording session"
                   className="w-full px-4 py-2 rounded text-white text-sm font-medium bg-red-600 hover:bg-red-700"
                   onClick={stopSession}
                 >
@@ -418,7 +474,10 @@ export function ControlApp() {
               onChange={(e) => {
                 const newWpm = Number(e.target.value);
                 setWpm(newWpm);
-                window.autoscribe.updateSettings({ pacing: { mode: pacingMode, wpm: newWpm, sentenceDelay: 500 } });
+                if (wpmDebounceRef.current) clearTimeout(wpmDebounceRef.current);
+                wpmDebounceRef.current = setTimeout(() => {
+                  window.autoscribe.updateSettings({ pacing: { mode: pacingMode, wpm: newWpm, sentenceDelay: 500 } });
+                }, 100);
               }}
               className="w-full"
             />
@@ -458,7 +517,10 @@ export function ControlApp() {
               onChange={(e) => {
                 const size = Number(e.target.value);
                 setFontSize(size);
-                sendDisplaySettings({ fontSize: size });
+                if (fontSizeDebounceRef.current) clearTimeout(fontSizeDebounceRef.current);
+                fontSizeDebounceRef.current = setTimeout(() => {
+                  sendDisplaySettings({ fontSize: size });
+                }, 100);
               }}
               className="w-full"
             />

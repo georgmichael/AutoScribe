@@ -37,7 +37,12 @@ function createControlWindow(): void {
 
   controlWindow.loadURL(CONTROL_WINDOW_WEBPACK_ENTRY);
 
-  // DevTools available via Cmd+Option+I (Mac) or Ctrl+Shift+I (Windows/Linux)
+  // Block DevTools in production builds
+  if (process.env.NODE_ENV !== 'development') {
+    controlWindow.webContents.on('devtools-opened', () => {
+      controlWindow?.webContents.closeDevTools();
+    });
+  }
 
   controlWindow.on('closed', () => {
     controlWindow = null;

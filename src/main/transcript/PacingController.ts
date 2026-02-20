@@ -1,6 +1,6 @@
 import { EventEmitter } from 'events';
 import { TranscriptSegment } from '../../shared/types/transcript';
-import { PacingMode, PacingSettings, DEFAULT_SETTINGS } from '../../shared/types/settings';
+import { PacingSettings, DEFAULT_SETTINGS } from '../../shared/types/settings';
 import { PacedSegment } from '../../shared/types/ipc';
 
 /**

@@ -16,10 +16,10 @@ module.exports = {
     extensions: ['.js', '.ts', '.json'],
   },
   externals: {
-    'better-sqlite3': 'commonjs better-sqlite3',
     vosk: 'commonjs vosk',
     'node-record-lpcm16': 'commonjs node-record-lpcm16',
     '@huggingface/transformers': 'commonjs @huggingface/transformers',
+    'electron-store': 'commonjs electron-store',
     express: 'commonjs express',
     ws: 'commonjs ws',
     qrcode: 'commonjs qrcode',
