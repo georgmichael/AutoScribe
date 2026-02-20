@@ -105,6 +105,31 @@ export function ControlApp() {
     return unsub;
   }, []);
 
+  // Hydrate UI from persisted settings on mount
+  useEffect(() => {
+    window.autoscribe.getSettings().then((settings) => {
+      if (settings.display) {
+        setFontFamily(settings.display.fontFamily);
+        setFontSize(settings.display.fontSize);
+        if (settings.display.highContrast) {
+          setDisplayTheme('high-contrast');
+        } else if (settings.display.backgroundColor === '#1F2937') {
+          setDisplayTheme('dark');
+        } else {
+          setDisplayTheme('light');
+        }
+      }
+      if (settings.pacing) {
+        setPacingMode(settings.pacing.mode);
+        setWpm(settings.pacing.wpm);
+      }
+      if (settings.audio) {
+        setSelectedDevice(settings.audio.deviceId);
+        setInputType(settings.audio.inputType);
+      }
+    });
+  }, []);
+
   // Fetch audio devices on mount
   useEffect(() => {
     window.autoscribe.getAudioDevices().then(setAudioDevices);
@@ -204,7 +229,6 @@ export function ControlApp() {
       <header className={`${t.header} border-b ${t.border} px-6 py-3 flex items-center justify-between`}>
         <div>
           <h1 className={`text-xl font-bold ${t.text}`}>AutoScribe</h1>
-          <p className={`text-xs ${t.textMuted}`}>AI-Enhanced Church Transcription</p>
         </div>
         <div className="flex items-center gap-4">
           {/* Control panel theme toggle - cycles light → dark → high-contrast */}
